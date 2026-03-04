@@ -2,3 +2,5 @@
 /Unity.ThirdParty.csproj
 /Unity.sln
 /Unity.sln.DotSettings.user
+#readme_imgs*
+#code_readme.md*

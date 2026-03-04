@@ -71,6 +71,19 @@ namespace ET
             await this;
         }
 
+        /// <summary>
+        /// 启动协程。注意这里相当于c#中的 async void类型的Task，调用方会异步返回，直接执行后续代码。参考：
+        /// <code>async void taskVoid()
+        /// {
+        ///     Console.WriteLine("in taskVoid " + System.DateTime.Now);
+        ///     //DoJobs();
+        ///     await Task.Delay(2000); // 模拟异步2秒后完成
+        ///     Console.WriteLine("out taskVoid " + System.DateTime.Now);
+        /// }
+        /// taskVoid(); // 调用时不能使用await，调用方直接返回，并继续执行后续代码</code><br />
+        /// 这里的Coroutine返回void类型Task，启动了协程也方便代码阅读。<br />
+        /// ETTask估计是为了实现一些自定义的调用，如果换成官方的Task/await机制应该也能实现，代码阅读会更友好。<br />
+        /// </summary>
         [DebuggerHidden]
         public void Coroutine()
         {

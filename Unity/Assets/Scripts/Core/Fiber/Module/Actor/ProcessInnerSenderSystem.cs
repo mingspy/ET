@@ -22,6 +22,14 @@ namespace ET
             MessageQueue.Instance.AddQueue(fiber.Id);
         }
 
+        /// <summary>
+        /// 处理消息的收发。<br />
+        /// 待发送的消息添加到<see cref="MailBoxComponent" /> 实现在<see cref="MailBoxComponentSystem.Add(MailBoxComponent, Address, MessageObject)"/> <br />
+        ///  - 实际是上发布一个 MailBoxInvoker 事件，然后由 MailBoxType_UnOrderedMessageHandler 处理该事件，调用 MessageDispatcher 发送。。。感觉饶了好多圈圈 。
+        /// 消息收发<see cref="Call"/>，是先异步等待，消息返回后，设置结果SetResult，结束异步等待。
+        /// <para>另外一种直接的思路：发送消息直接放到发送队列里，然后由发送线程进行发送，接收线程收到消息后触发事件或者回调。(发送和接收线程可以用一个，或者用线程池)。</para>
+        /// </summary>
+        /// <param name="self"></param>
         [EntitySystem]
         private static void Update(this ProcessInnerSender self)
         {
@@ -114,6 +122,16 @@ namespace ET
             return ++self.RpcId;
         }
 
+        /// <summary>
+        /// 实现消息的异步发送和接收，超时后抛出异常。<br />
+        /// 流程是消息放到<see cref="MessageQueue.Send(Address, ActorId, MessageObject)"/>，然后由<see cref="Update"/>来取出消息，调用SetResult设置异步结果，然后返回结果。
+        /// </summary>
+        /// <param name="self"></param>
+        /// <param name="actorId"></param>
+        /// <param name="request"></param>
+        /// <param name="needException"></param>
+        /// <returns></returns>
+        /// <exception cref="Exception"></exception>
         public static async ETTask<IResponse> Call(
                 this ProcessInnerSender self,
                 ActorId actorId,
@@ -138,12 +156,14 @@ namespace ET
             Type requestType = request.GetType();
             
             IResponse response;
+            // 消息放到消息队列中(MessageQueue)，自动发送和接收服务器返回消息。
             if (!self.SendInner(actorId, (MessageObject)request))  // 纤程不存在
             {
                 response = MessageHelper.CreateResponse(requestType, rpcId, ErrorCore.ERR_NotFoundActor);
                 return response;
             }
-            
+
+            // 开始等待服务器返回结果，先注册一个等待结构体，实际收发在Update()中。
             MessageSenderStruct messageSenderStruct = new(actorId, requestType, needException);
             self.requestCallback.Add(rpcId, messageSenderStruct);
             
@@ -167,6 +187,7 @@ namespace ET
                 }
             }
             
+            // 使用协程(异步任务）设置超时后返回超时异常。
             Timeout().Coroutine();
             
             long beginTime = TimeInfo.Instance.ServerFrameTime();

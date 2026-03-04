@@ -12,6 +12,7 @@ namespace ET.Server
             
             Room room = root.GetComponent<Room>();
             FrameBuffer frameBuffer = room.FrameBuffer;
+            // 每秒更新一次
             if (message.Frame % (1000 / LSConstValue.UpdateInterval) == 0)
             {
                 long nowFrameTime = room.FixedTimeCounter.FrameTime(message.Frame);
