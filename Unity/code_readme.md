@@ -1,30 +1,17 @@
-# 代码阅读记录
+# ET代码阅读记录
 
-## 术语&机制
+## ET术语&机制
 
 ### 代码生成
 ET中有很多自动生成的代码，如[[EntitySystem]](../Share/Share.SourceGenerator/Generator/ETSystemGenerator/ETSystemGenerator.cs)主要依赖于 C# 的 Source Generator（源代码生成器）技术‌，结合特定的特性（Attribute）标记，在编译阶段自动推断并生成对应的 System 类文件，从而避免手动编写重复模板代码。  
 搜索 ISourceGenerator 可以找到相关代码在 ET/Share/Share.SourceGenerator/Generator/ 文件夹下  
-参考 [Roslyn 技术解析：如何利用它做代码生成？](https://blog.csdn.net/2501_94611820/article/details/155851773)、 [聊一聊 C#中有趣的 SourceGenerator生成器](https://zhuanlan.zhihu.com/p/778871873)
+参考:  [Roslyn 技术解析：如何利用它做代码生成？](https://blog.csdn.net/2501_94611820/article/details/155851773) 、   [聊一聊 C#中有趣的 SourceGenerator生成器](https://zhuanlan.zhihu.com/p/778871873)
+
+**改进点**：用c#泛型，即template\<T>可以实现自动代码生成的相关功能，代码阅读起来更容易一些。
 
 
 ### SceneType变更
-[EntryEvent3_InitClient](Assets/Scripts/HotfixView/Client/Demo/EntryEvent3_InitClient.cs) 会修改Client中SceneType.Main 为 globalComponent.GlobalConfig.AppType，如修改为 Demo、LockStep。
-
-### Schedulers
-| 类型                  |   作用    |                            细节 |
-|:--------------------|:-------:|------------------------------:|
-| MainThreadScheduler | 主线程调度器  |      主线程中调度Update/LaterUpdate |
-| ThreadScheduler     |  线程调度器  |           启动一个线程，线程执行Loop()函数 |
-| ThreadPoolScheduler | 线程池调度器  | 启动多个线程并放到线程池中，每个线程都执行Loop()函数 |
-
-
-### Fiber：纤程
-线程中可以异步执行的子任务，相当于一个Task，由ISchedulers去调度执行。
-- 服务端与客户端Fibers区别：
-  - 客户端的MainThreadScheduler Update/LaterUpdate由Unity驱动，服务器启动了一个线程来驱动
-  - [EntryEvent2_InitServer代码](Assets/Scripts/Hotfix/Server/Demo/EntryEvent2_InitServer.cs)中启动的Fibers都是ThreadPoolScheduler类型，并且设置了对应的配置文件中的SceneType类型（用于事件过滤）。
-
+在[EntryEvent3_InitClient](Assets/Scripts/HotfixView/Client/Demo/EntryEvent3_InitClient.cs) 中会修改Client中SceneType.Main 为 globalComponent.GlobalConfig.AppType，如修改为 Demo、LockStep，从而使得一些消息Hanlder可以正常工作。
 
 ### ECS
 Entity & Componet & System（实体、组件、系统），类似于MVC  
@@ -44,9 +31,179 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
 ### ETTask
 异步任务，类似C#中的Task。用C#原生的Task应该也可以实现ETTask相关功能，更简洁。
 
+### Fiber：纤程
+线程中可以异步执行的子任务，相当于一个Task，由ISchedulers去调度执行。
+- 服务端与客户端Fibers区别：
+  - 客户端的MainThreadScheduler Update/LaterUpdate由Unity驱动，服务器启动了一个线程来驱动
+  - [EntryEvent2_InitServer代码](Assets/Scripts/Hotfix/Server/Demo/EntryEvent2_InitServer.cs)中启动的Fibers都是ThreadPoolScheduler类型，并且设置了对应的配置文件中的SceneType类型（用于事件过滤）。
+
+### Schedulers
+| 类型                  |   作用    |                            细节 |
+|:--------------------|:-------:|------------------------------:|
+| MainThreadScheduler | 主线程调度器  |      主线程中调度Update/LaterUpdate |
+| ThreadScheduler     |  线程调度器  |           启动一个线程，线程执行Loop()函数 |
+| ThreadPoolScheduler | 线程池调度器  | 启动多个线程并放到线程池中，每个线程都执行Loop()函数 |
+
+### 客户端Update链路
+[Init: MonoBehaviour](Assets/Scripts/Loader/MonoBehaviour/Init.cs)
+- Update():
+  - TimeInfo.Instance.[Update](Assets/Scripts/Core/World/Module/TimeInfo/TimeInfo.cs)();
+  - FiberManager.Instance.[Update](Assets/Scripts/Core/World/Module/Fiber/FiberManager.cs)():
+    - this.mainThreadScheduler.[Update](Assets/Scripts/Core/World/Module/Fiber/MainThreadScheduler.cs)():
+      - this.threadSynchronizationContext.Update();
+      - foreach fiber.[Update](Assets/Scripts/Core/Fiber/Fiber.cs)():
+        - this.EntitySystem.[Update](Assets/Scripts/Core/Fiber/EntitySystem.cs)():
+          - ```csharp
+            foreach component in this.queues[InstanceQueueIndex.Update];   
+                foreach iUpdateSystem in GetSystems(component, IUpdateSystem);  
+                    iUpdateSystem.Run();
+            ``` 
+- LateUpdate():
+  - FiberManager.Instance.LateUpdate():
+    - this.mainThreadScheduler.LateUpdate():
+      - foreach fiber.LateUpdate():
+        - this.EntitySystem.LateUpdate():
+          - ```csharp
+            foreach component in this.queues[InstanceQueueIndex.LateUpdate];   
+                foreach iLateUpdateSystem in GetSystems(component, ILateUpdateSystem);  
+                    iLateUpdateSystem.Run();
+            ``` 
+        - FrameFinishUpdate();
+        - this.ThreadSynchronizationContext.Update();
+
+  
+### 网络相关
+#### TCP & UDP &socket
+|                                                                          |
+|:----------------------------------------------------------------------------|
+| [【socket笔记】TCP、UDP通信总结](https://cloud.tencent.com/developer/article/1545369)|
+| [TCP/UDP/Socket 通俗讲解](https://zhuanlan.zhihu.com/p/686583180)               |
+
+TCP 和 UDP 位于 TCP/IP 协议栈的‌传输层‌，而 Socket 并不位于协议栈的某一层，它是‌应用层与传输层之间的编程接口抽象层‌，用于实现网络通信。  
+
+一、TCP 与 UDP：传输层的核心协议
+在 TCP/IP 模型中，传输层负责端到端的数据传输控制，主要协议就是 TCP（传输控制协议）和 UDP（用户数据报协议）：
+- TCP‌：面向连接、可靠传输，通过三次握手建立连接、确认机制、重传、流量控制等确保数据完整有序，适用于 HTTP、FTP、SMTP 等对可靠性要求高的场景。 
+- UDP‌：无连接、不可靠但高效，不保证顺序和重传，适用于 DNS、视频流、实时语音等对延迟敏感的场景。
+两者都工作在‌传输层‌，利用端口号标识应用程序进程，实现多任务并发通信。
+
+二、Socket：不是协议，而是通信接口
+Socket（套接字）并不是一个协议，也不是协议栈中的一层，而是操作系统提供的一组 API，作为‌应用层与传输层之间的桥梁‌：
+- 它封装了 TCP/IP 协议族的复杂细节，让开发者可以通过简单的函数调用（如 socket()、connect()、send()）完成网络通信。
+- 每个 Socket 由 IP 地址 + 端口号 + 协议类型‌ 唯一标识，形成一个通信端点。
+- 无论是基于 TCP 还是 UDP 的应用，都需要通过 Socket 接口与内核中的协议栈交互。  
+
+举个比喻：如果把 TCP/IP 协议栈比作邮政系统，那么 IP 是地址系统，TCP/UDP 是信件的投递方式（挂号信 vs 普通信），而 Socket 就是你去邮局寄信时填写单据、递交包裹的那个“窗口接口”。
+
+#### KCP 
+||
+|-|
+|[KCP协议：从TCP到UDP家族QUIC/KCP/ENET](https://cloud.tencent.com/developer/article/1964393)|
+|[KCP 协议：为流速和低延时设计的协议丨音视频基础](https://cloud.tencent.com/developer/article/2021491)| 
+
+随着网络技术飞速发展，网速已不再是传输的瓶颈，CDN服务商Akamai报告从2008年到2015年7年时间，各个国家网络平均速率由1.5Mbps提升为5.1Mbps，网速提升近4倍。网络环境变好，网络传输的延迟、稳定性也随之改善，UDP的丢包率低于5%，如果再使用应用层重传，能够完全确保传输的可靠性。  
+KCP协议就是在保留UDP快的基础上，提供可靠的传输，应用层使用更加简单——TCP可靠简单，但是复杂无私，所以速度慢。KCP尽可能保留UDP快的特点下，保证可靠。
+- TCP是为流量设计的（每秒内可以传输多少KB的数据），讲究的是充分利用带宽。
+- KCP是为流速设计的（单个数据包从一端发送到一端需要多少时间），以10%-20%带宽浪费的代价换取了比 TCP快30%-40%的传输速度。  
+
+TCP信道是一条流速很慢，但每秒流量很大的大运河，而KCP是水流湍急的小激流。  
+不同传输层协议在可靠性、流量控制等方面都有差别，而这些技术细节会对延迟造成影响。  
+tcp追求的是完全可靠性和顺序性，丢包后会持续重传直至该包被确认，否则后续包也不会被上层接收，且重传采用指数避让策略，决定重传时间间隔的RTO(retransmission timeout)不可控制，linux内核实现中最低值为200ms，这样的机制会导致丢包率短暂升高的情况下应用层消息响应延迟急剧提高，并不适合实时性高、网络环境复杂的游戏。  
+基于udp定制传输层协议，引入顺序性和适当程度或者可调节程度的可靠性，修改流控算法。适当放弃重传，如：设置最大重传次数，即使重传失败，也不需要重新建立连接。比较知名的tcp加速开源方案有：quic、enet、kcp、udt。
+
+KCP是一个快速可靠协议，能以比 TCP浪费10%-20%的带宽的代价，换取平均延迟降低 30%-40%，且最大延迟降低三倍的传输效果。  
+纯算法实现，并不负责底层协议（如UDP）的收发，需要使用者自己定义下层数据包的发送方式，以 callback的方式提供给 KCP。 连时钟都需要外部传递进来，内部不会有任何一次系统调用。
+
+**KCP的实现细节：**  
+- ‌基于UDP‌：KCP底层使用了UDP协议来传输数据包，因为UDP提供了低延迟的特性，这对于游戏等实时应用非常重要。
+- ‌封装UDP‌：KCP在UDP的基础上增加了一层封装，这层封装包括了数据包的序列号、时间戳等控制信息，用于实现其特有的流量控制和拥塞控制机制。
+- ‌不纯粹的TCP特性‌：虽然KCP使用了UDP的传输机制，但它通过内部的机制（如滑动窗口、拥塞控制算法等）模拟了TCP的一些特性（如可靠性、流量控制），从而在保证低延迟的同时提高了数据传输的稳定性。
+#### KService & TService
+在 ET 框架中，KService、Session、TChannel 和 UDP Socket 之间的关系是构建其网络通信机制的重要组成部分。以下是它们之间的关系和作用：
+
+1. KService 与 UDP Socket
+  - KService 是 ET 中用于处理 UDP 协议‌ 的服务类，它封装了 UDP 的监听和连接逻辑。
+  - 它内部使用 UdpClient 来创建 UDP 套接字（Socket），用于接收和发送数据包。
+  - 在服务端，KService 会监听特定的 IP 地址和端口，等待来自客户端的 UDP 数据包。
+  - KService 负责管理多个 UDP 连接，每个连接对应一个 Channel‌（如 KChannel）。    
+KService 与 UDP Socket 的关系是：KService 是对 UDP Socket 的封装，用于处理 UDP 的连接和通信。
+
+2. TChannel 与 TCP Socket
+  - TChannel 是 ET 中用于处理 TCP 连接的底层通道类。
+  - 它内部使用 Socket 类来创建 TCP 套接字，用于建立与客户端的连接。
+  - 每个 TChannel 对应一个 TCP 连接，负责该连接的数据收发。
+  - TChannel 会通过异步方式读取和发送数据，并将数据交给上层处理。  
+TChannel 与 TCP Socket 的关系是：TChannel 是对 TCP Socket 的封装，用于处理 TCP 连接的读写操作。
+
+3. Session 与 Channel
+  - Session 是 ET 中对一个连接的高层封装，它基于 Channel（如 TChannel 或 KChannel）实现。
+  - Session 提供了更高层的接口，用于发送和接收消息，并负责消息的序列化和反序列化。
+  - Session 与 Channel 之间是一对一的关系，一个 Session 对应一个 Channel。
+  - Session 是上层业务逻辑与底层网络通信之间的桥梁。  
+   Session 是对 Channel 的封装，提供业务层的接口和功能。
+
+4. KService 与 Session 的关系‌
+  - KService 通常会管理多个 KChannel（UDP 连接），而每个 KChannel 会对应一个 Session。
+  - 当一个 UDP 连接建立后，KService 会创建一个 KChannel，并将其与一个 Session 关联起来。
+  - Session 负责处理该连接上的消息逻辑。  
+KService 通过 KChannel 管理 UDP 连接，而每个 KChannel 对应一个 Session。
+
+5. TChannel 与 Session 的关系‌
+  - 类似地，TChannel 与 Session 也是一对一的关系。
+  - 当一个 TCP 连接建立后，TService 会创建一个 TChannel，并将其与一个 Session 关联。
+  - Session 负责处理该连接上的业务逻辑。  
+TChannel 与 Session 之间是一对一的绑定关系，TChannel 是底层通信通道，Session 是高层封装。
 
 
-## 启动流程
+
+| __总结关系图__   |    |   __总结关系图__  |
+|:---------------------:|----|:----------------------:|
+|    KService (UDP)     |    |     TService (TCP)     |
+|           ↓           |    |           ↓            |
+| KChannel (UDP Socket) |    | TChannel (TCP Socket)  |
+|           ↓           |    |           ↓            |
+|  Session (业务逻辑层)      |    |    Session (业务逻辑层)     |
+- KService 和 TService 是服务端的监听组件，分别处理 UDP 和 TCP 连接。
+- KChannel 和 TChannel 是底层的连接通道，分别对应 UDP 和 TCP 的 Socket。
+- Session 是上层的会话封装，负责业务逻辑处理，与 Channel 一一对应。
+
+这些组件共同构成了 ET 框架的网络通信机制，支持 TCP、UDP 和 WebSocket 等多种协议。
+
+
+#### [ET Session](Assets/Scripts/Model/Share/Module/Message/Session.cs) <a id="session"></a>
+在 ET 框架中，Session 通过底层的 KChannel/TChannel 与客户端和服务端进行通信。客户端和服务端都维护一个与对方的 Socket 连接，这个连接通过 KChannel/TChannel 管理，Session 是对这个连接的封装。每个连接都有一个唯一的 Socket 套接字链接 ID，用于区分不同的连接。
+
+##### Session 的通信流程‌
+1. 连接建立‌：
+- 客户端通过 NetClientComponent.Create() 方法创建一个 Session，该方法会建立与服务器的 TCP 连接。
+- 服务器端通过 Accept() 方法监听客户端连接请求，当连接建立后，会创建一个 TChannel 对象，并将其包装成一个 Session 对象。
+
+2. 底层通信‌：
+- Session 通过底层的 KChannel/TChannel 进行实际的数据传输。KChannel/TChannel 是一个封装了 Socket 连接的类，负责实际的网络读写操作。
+- 客户端和服务端都会维护一个与对方的 Socket 连接，这个连接通过 KChannel/TChannel 管理。Session 本身是上层逻辑对这个连接的封装。
+
+3. 消息传递‌：
+- 客户端通过 Session.Send() 方法发送消息给服务器，消息会通过底层的 KChannel/TChannel 发送到服务器。
+- 服务器端通过 Session 接收客户端发送的消息，并处理这些消息。
+
+##### Socket 套接字链接 ID
+- 客户端和服务端都保持 Socket 套接字链接‌：
+  - 客户端和服务端都维护一个与对方的 Socket 连接，这个连接在底层通过 KChannel/TChannel 管理。
+  - 每个连接都有一个唯一的标识符，即 Socket 套接字链接 ID。这个 ID 是操作系统分配给每个 UDP/TCP 连接的，用于区分不同的连接。
+- Session 与 Socket 的关系‌：
+  - Session 是对底层 Socket 连接的封装，它包含了一个 KChannel/TChannel 对象，该对象持有实际的 Socket 连接。
+  - 因此，Session 与 Socket 套接字链接 ID 是一一对应的，Session 通过 TChannel 操作底层的 Socket。
+
+#####  具体实现 TODO
+- Call
+- Send
+
+### 开源物理引擎
+为了保证帧同步服务端与客户端计算结果一直，一般使用int物理引擎，开源的如 BEPUphysicsInt  
+[BEPU物理引擎碰撞系统的架构与设计](https://zhuanlan.zhihu.com/p/549276185)
+
+
+## ET启动流程
 ![启动流程图片](readme_imgs/00_Start.jpg)  
 服务端和客户端执行流程大致相同，客户端入口[init.cs](Assets/Scripts/Loader/MonoBehaviour/Init.cs)，服务端入口[Program.cs](../DotNet/App/Program.cs)。以客户端为例，主要过程如下：  
 - 创建world单例（调用world.Instance时自动创建)，作为所有单例的管理仓库。
@@ -86,7 +243,7 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
     - [EntryEvent2_InitServer](Assets/Scripts/Hotfix/Server/Demo/EntryEvent2_InitServer.cs)：创建服务配置文件中的一系列纤程，包括Gate，Router，Match等。
     - [EntryEvent3_InitClient](Assets/Scripts/HotfixView/Client/Demo/EntryEvent3_InitClient.cs)：向MainFiber添加一系列组件 GlobalComponent、UIGlobalComponent、UIComponent、ResourcesLoaderComponent、PlayerComponent、CurrentScenesComponent，并发布[AppStartInitFinish]事件。
 
-## 登录流程
+## ET登录流程
 参考 [b站 【ET框架 -- 登录流程】 by 和v诺](https://www.bilibili.com/video/BV1Rr26YFED2?vd_source=806cbed30e2817314f6d8f3b290f03e4)  
 ![登录导图](readme_imgs/01_Login.jpeg)  
  
@@ -152,10 +309,6 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
       - 创建KChannel
       - 添加创建KChannel到 localConnChannels
 
-- [Session <a id="session"></a>](Assets/Scripts/Model/Share/Module/Message/Session.cs)  TODO
-    - Call
-    - Send
-    
 
 - 网络流程示意图
 ![网络流程示意图](readme_imgs/02_Networks00.jpg)
@@ -205,7 +358,7 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
     - 调用session.Send(response), （[HandleAsync, Line:98](Assets/Scripts/Model/Share/Module/Message/MessageSessionHandler.cs)）
 
 
-## 状态同步
+## ET状态同步
 ### 进入战斗流程
 概述： 客户端登录完成后，创建进入战斗UI，点击进入时发送进入地图请求给Gate，Gate加载用户信息，并把相关信息转送给Map服务，Map服务控制用户地图加载以及角色创建。
 ![进入战斗流程图](readme_imgs/03_StateSync00.jpg)
@@ -251,7 +404,11 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
     - 通知 Wait_SceneChangeFinish
 - 创建用户角色消息处理：[M2C_CreateMyUnitHandler](Assets/Scripts/Hotfix/Client/Demo/Main/Unit/M2C_CreateMyUnitHandler.cs) （为什么还有有这个过程？不解，场景切换时直接创建用户角色就可以了？为了展示异步用法？）
   - 通知场景切换协程继续往下走 ： 发布 Wait_CreateMyUnit 通知
+
+
 ---
+
+
 #### 服务端
 - Gate [C2G_EnterMapHandler](Assets/Scripts/Hotfix/Server/Demo/Gate/C2G_EnterMapHandler.cs)
   - 在Gate上动态创建一个Map Scene，把Unit从DB中加载放进来，然后传送到真正的Map中，这样登陆跟传送的逻辑就完全一样了
@@ -300,7 +457,11 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
 - 根据消息Id获取要停止的角色
 - 获取角色的 MoveComponent
 - 调用 [moveComponent.MoveToAsync](#movecomponent)
+
+
 ---
+
+
 #### Server: Map Fiber
 ##### [寻路消息处理](Assets/Scripts/Hotfix/Server/Demo/Map/Move/C2M_PathfindingResultHandler.cs)
 - 调用 [unit.FindPathMoveToAsync](Assets/Scripts/Hotfix/Server/Demo/Map/Move/MoveHelper.cs)
@@ -365,7 +526,7 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
   - 直接设置unit.Position
 
 
-## 帧同步
+## ET帧同步
 
 ### 进入场景流程
 ![帧同步进入场景流程图](readme_imgs/04_LockSync01.jpg)
@@ -392,6 +553,14 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
     - 发布 LSSceneInitFinish 事件
       - --》LSSceneInitFinish_Finish （view层）
         - 添加并初始化玩家角色 [LSUnitViewComponent.InitAsync](Assets/Scripts/HotfixView/Client/LockStep/LSUnitViewComponentSystem.cs) 
+          - 从room.LSWorld获取 LSUnitComponent
+          - 为room中的每个玩家创建角色
+            - lsUnitComponent中获取角色的元数据
+            - ResourcesLoaderComponent加载预制件
+            - 调用UnityEngine初始化角色GameObject
+            - 设置角色的位置
+            - 用LSUnitView包装角色GameObject，并添加到 LSUnitViewComponent
+            - 为角色添加 LSAnimatorComponent
         - 添加 LSCameraComponent 、 LSOperaComponent
         - 移除 UILSLobby
 - Room2C_Start 消息处理 [Room2C_EnterMapHandler](Assets/Scripts/Hotfix/Client/LockStep/Room2C_EnterMapHandler.cs)
@@ -441,7 +610,7 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
 ![帧同步逻辑](readme_imgs/04_LockSync10.jpg)  
 
 #### 客户端
-**[LSClientUpdaterSystem](Assets/Scripts/Hotfix/Client/LockStep/LSClientUpdaterSystem.cs)** <a id="lsclientupdatersystem"></a>
+帧同步客户端更新：**[LSClientUpdaterSystem](Assets/Scripts/Hotfix/Client/LockStep/LSClientUpdaterSystem.cs)** <a id="lsclientupdatersystem"></a>
 - Update
   - 若未到当前帧时间则退出
   - 最多只预测5帧，否则退出
@@ -458,6 +627,12 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
 
 [Room2C_CheckHashFailHandler](Assets/Scripts/Hotfix/Client/LockStep/Room2C_CheckHashFailHandler.cs)
 - 没看懂，看代码只是返解压了 TODO
+
+玩家角色视图：[LSUnitView](Assets/Scripts/HotfixView/Client/LockStep/LSUnitViewSystem.cs)，即Unity GameObject的封装
+- Update
+  - 根据LSUnit元数据，更新成员变量 Position 、 Rotation等
+  - 设置 LSAnimatorComponent 的 speed
+  - 更新角色的位置、转向
 
 ---
 
@@ -486,8 +661,8 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
   - 发送给客户端 MessageLocationSenderOneType.Send
 
 ---  
-#### 公共逻辑  TODO
-**[RoomSystem](Assets/Scripts/Hotfix/Share/LockStep/RoomSystem.cs)** <a id="roomsystem"></a>
+#### 公共逻辑  
+房间：**[RoomSystem](Assets/Scripts/Hotfix/Share/LockStep/RoomSystem.cs)** <a id="roomsystem"></a>
 - Init <a id="room_init"></a>
   - 初始化成员变量
     - 设置起始时间
@@ -500,22 +675,32 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
     - 对每个玩家进行初始化[LSUnitFactory.Init](Assets/Scripts/Hotfix/Share/LockStep/LSUnitFactory.cs)
       - 向 LSUnitComponent 添加  LSUnit（玩家元数据) 
       - 设置玩家位置和旋转
-      - 玩家添加 LSInputComponent
+      - 玩家添加 [LSInputComponent](#lsinputcomponent)
 - Update <a id="room_update"></a>   
   - 把当前帧所有玩家的输入设置到LSWorld中的玩家元数据上
   - 如果不是重播
     - 保存LSWorld
     - 记录LSWorld帧
   - 更新LSWorld: LSWorld.Update
-- SendHash <a id="room_sendhash"></a>: 扩展方法，client发送hash用于验证
+- SendHash() <a id="room_sendhash"></a>: 扩展方法，client发送hash用于验证
   - 创建 C2Room_CheckHash 消息
   - ClientSenderComponent.Send发送
 
-[LSWorld](Assets/Scripts/Model/Share/LockStep/LSWorld.cs) 
+帧同步游戏世界：[LSWorld](Assets/Scripts/Model/Share/LockStep/LSWorld.cs)，保存了所有的玩家状态
+- Update
+  - 调用[LSUpdater.Update()](Assets/Scripts/Model/Share/LockStep/LSUpdater.cs)
+    - 调用LSEntitySystemSingleton.Instance.[LSUpdate](Assets/Scripts/Model/Share/LockStep/LSEntitySystemSingleton.cs);
+      - 内部实现，调用lsEntity的LSUpdate()方法，目前只有一个 LSInputComponent
+
+角色元数据位置更新组件：[LSInputComponent<a id="lsinputcomponent"></a>](Assets/Scripts/Hotfix/Share/LockStep/LSInputComponentSystem.cs)
+- LSUpdate
+  - 从父节点获取 LSUnit
+  - 计算位移
+  - 更新unit位置
+  - 更新unit朝向
 
 
-
-
+  
 ## 个人评价
 ### ET优点
 概括为ECS、事件、异步。  
@@ -533,14 +718,16 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
   - 消息的收发，经过多层才最终发送消息，收发消息都是在update中执行的，会延迟3ms；或许可以改成：消息直接发到消息队列，收发线程轮询处理消息收发，收到消息放消息队列or触发事件回调。
   - UI创建层层转发，感觉可以用UIFactor直接创建。
 
-## TODO:
 ET整体设计理念是非常优秀的了，深以为然，世界上并没有完美的项目，以上说的痛点并非致命的缺陷，采用一种设计模式，必然有利有弊。  
 实现上有些改进空间，但不是必须的，先把要做的游戏实现，进行商业试水，跑完流程才是当务之急。
 提出这些疑问，只是个人理解别人框架，与自己知识体系碰撞融合的一个过程。
 
-- P0: 实现自己的游戏，走完商业流程。 
-- P3: 实现EasyGame框架：包括常用的skill和Buff管理，通讯，特效，热更新，AI。可行性方案是在实现游戏的过程中完成部分需要的功能，后续独立成框架。
-
-
-
-
+- P0: 先实现游戏，走完商业流程。 
+- P2: 实现EasyGame平台，流水线开发游戏。
+  - 简单易用：
+    - 可视化编程，不用代码也能开发游戏；
+    - 程序员友好，方便定制
+    - 提供常见的组件： 包括常用的skill和Buff管理，通讯，特效，热更新，AI，渲染
+  - 高效：
+    - 自动3D建模：场景，角色，特效，音效等。游戏大模型。
+    - 可自动完成大部分编程，部署和运营
