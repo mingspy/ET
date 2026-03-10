@@ -381,7 +381,7 @@ namespace ET
                             kChannel.OnError(ErrorCore.ERR_PeerDisconnect);
 
                             break;
-                        case KcpProtocalType.MSG: // 断开
+                        case KcpProtocalType.MSG: // 消息
                             // 长度<9，不是Msg消息
                             if (messageLength < 9)
                             {

@@ -3,15 +3,12 @@
 ## ET术语&机制
 
 ### 代码生成
-ET中有很多自动生成的代码，如[[EntitySystem]](../Share/Share.SourceGenerator/Generator/ETSystemGenerator/ETSystemGenerator.cs)主要依赖于 C# 的 Source Generator（源代码生成器）技术‌，结合特定的特性（Attribute）标记，在编译阶段自动推断并生成对应的 System 类文件，从而避免手动编写重复模板代码。  
+ET中有很多自动生成的代码，如[[EntitySystem]](../Share/Share.SourceGenerator/Generator/ETSystemGenerator/ETSystemGenerator.cs)主要依赖于 C# 的 Source Generator（源代码生成器）技术，结合特定的特性（Attribute）标记，在编译阶段自动推断并生成对应的 System 类文件，从而避免手动编写重复模板代码。  
 搜索 ISourceGenerator 可以找到相关代码在 ET/Share/Share.SourceGenerator/Generator/ 文件夹下  
 参考:  [Roslyn 技术解析：如何利用它做代码生成？](https://blog.csdn.net/2501_94611820/article/details/155851773) 、   [聊一聊 C#中有趣的 SourceGenerator生成器](https://zhuanlan.zhihu.com/p/778871873)
 
-**改进点**：用c#泛型，即template\<T>可以实现自动代码生成的相关功能，代码阅读起来更容易一些。
-
-
 ### SceneType变更
-在[EntryEvent3_InitClient](Assets/Scripts/HotfixView/Client/Demo/EntryEvent3_InitClient.cs) 中会修改Client中SceneType.Main 为 globalComponent.GlobalConfig.AppType，如修改为 Demo、LockStep，从而使得一些消息Hanlder可以正常工作。
+在[EntryEvent3_InitClient](Assets/Scripts/HotfixView/Client/Demo/EntryEvent3_InitClient.cs) 中会修改Client中SceneType.Main 为 globalComponent.GlobalConfig.AppType，如 Demo、LockStep，从而使得部分Hanlder适配。
 
 ### ECS
 Entity & Componet & System（实体、组件、系统），类似于MVC  
@@ -29,7 +26,18 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
 
 
 ### ETTask
-异步任务，类似C#中的Task。用C#原生的Task应该也可以实现ETTask相关功能，更简洁。
+异步任务，类似C#中的Task。
+在ET框架中，‌无法使用C#原生Task直接实现ETTask的全部功能‌，根本原因在于两者设计理念和运行机制存在本质差异：
+
+⚙️ 核心差异分析
+
+| ‌特性‌ | ETTask | ‌原生Task |
+| --- | --- | --- |
+| ‌执行模型‌ | 单线程协程调度（无线程切换） | 基于线程池的多线程调度 |
+| ‌生命周期管理‌ | 深度集成ET实体系统（自动挂接事件） | 无内置游戏对象生命周期关联 |
+| ‌上下文保持‌ | 跨进程调用保留ECS上下文 | 依赖AsyncLocal，ECS不兼容 |
+| ‌性能开销‌ | 零分配轻量状态机（百万级协程支持） | 线程池调度产生GC压力 |
+| ‌取消机制‌ | 原生支持ETCancellationToken | CancellationToken无法关联实体 |
 
 ### Fiber：纤程
 线程中可以异步执行的子任务，相当于一个Task，由ISchedulers去调度执行。
@@ -71,31 +79,60 @@ Entity & Componet & System（实体、组件、系统），类似于MVC
         - FrameFinishUpdate();
         - this.ThreadSynchronizationContext.Update();
 
-  
+### 开源物理引擎
+为了保证帧同步服务端与客户端计算结果一直，一般使用int物理引擎，开源的如 BEPUphysicsInt  
+[BEPU物理引擎碰撞系统的架构与设计](https://zhuanlan.zhihu.com/p/549276185)
+
+ 
 ### 网络相关
-#### TCP & UDP &socket
+- 网络流程示意图
+  ![网络流程示意图](readme_imgs/02_Networks00.jpg)
+  网络组件中的Call和Send的区别是，Call会异步等待结果返回，Send发给消息队列后就返回调用方。
+
+#### TCP/UDP & Socket
 |                                                                          |
 |:----------------------------------------------------------------------------|
 | [【socket笔记】TCP、UDP通信总结](https://cloud.tencent.com/developer/article/1545369)|
 | [TCP/UDP/Socket 通俗讲解](https://zhuanlan.zhihu.com/p/686583180)               |
 
-TCP 和 UDP 位于 TCP/IP 协议栈的‌传输层‌，而 Socket 并不位于协议栈的某一层，它是‌应用层与传输层之间的编程接口抽象层‌，用于实现网络通信。  
+简单来说:
+- Socket是网络API，支持众多协议簇，AF_*/PF_*，是网络通讯的具体实现。
+- 调用 Socket 接口可以实现TCP 和 UDP 网络通信。  
+
+| ‌协议簇名称‌ | ‌协议用途简介‌ |
+| --- | --- |
+| AF_INET / PF_INET | ‌IPv4互联网通信‌：支持TCP、UDP、ICMP等协议，用于标准网络通信（如网页访问、文件传输） |
+| AF_INET6 / PF_INET6 | ‌IPv6互联网通信‌：支持下一代互联网协议，提供更大地址空间和增强安全性 |
+| AF_UNIX / PF_UNIX | ‌本地进程间通信（IPC）‌：通过文件系统路径名实现同一主机的高效进程通信 |
+| AF_PACKET / PF_PACKET | ‌链路层原始访问‌：直接处理以太网帧等底层数据包（支持SOCK_RAW/SOCK_DGRAM） |
+| AF_NETLINK / PF_NETLINK | ‌内核-用户空间通信‌：Linux系统专用，用于系统监控和配置（如网络接口管理） |
+| AF_BLUETOOTH | ‌蓝牙设备通信‌：支持L2CAP、RFCOMM等协议，实现蓝牙设备间数据传输 |
+| AF_CAN | ‌控制器局域网（CAN）总线‌：用于汽车、工业设备等嵌入式系统的实时通信 |
+| AF_XNS / PF_NS | ‌Xerox网络服务‌：历史遗留协议，现代系统已较少使用 |
+
+关键说明  
+1. 协议映射关系‌：
+- AF_INET中：SOCK_STREAM→TCP，SOCK_DGRAM→UDP
+- AF_UNIX中：SOCK_STREAM→可靠字节流，SOCK_DGRAM→数据报
+2. 跨平台差异‌：
+- AF_NETLINK仅限Linux系统
+- AF_UNIX在Windows系统称为AF_LOCAL（功能等效
 
 一、TCP 与 UDP：传输层的核心协议
 在 TCP/IP 模型中，传输层负责端到端的数据传输控制，主要协议就是 TCP（传输控制协议）和 UDP（用户数据报协议）：
-- TCP‌：面向连接、可靠传输，通过三次握手建立连接、确认机制、重传、流量控制等确保数据完整有序，适用于 HTTP、FTP、SMTP 等对可靠性要求高的场景。 
-- UDP‌：无连接、不可靠但高效，不保证顺序和重传，适用于 DNS、视频流、实时语音等对延迟敏感的场景。
-两者都工作在‌传输层‌，利用端口号标识应用程序进程，实现多任务并发通信。
+- TCP：面向连接、可靠传输，通过三次握手建立连接、确认机制、重传、流量控制等确保数据完整有序，适用于 HTTP、FTP、SMTP 等对可靠性要求高的场景。 
+- UDP：无连接、不可靠但高效，不保证顺序和重传，适用于 DNS、视频流、实时语音等对延迟敏感的场景。
+两者都工作在传输层，利用端口号标识应用程序进程，实现多任务并发通信。
 
 二、Socket：不是协议，而是通信接口
-Socket（套接字）并不是一个协议，也不是协议栈中的一层，而是操作系统提供的一组 API，作为‌应用层与传输层之间的桥梁‌：
+Socket（套接字）并不是一个协议，也不是协议栈中的一层，而是操作系统提供的一组 API，作为应用层与传输层之间的桥梁：
 - 它封装了 TCP/IP 协议族的复杂细节，让开发者可以通过简单的函数调用（如 socket()、connect()、send()）完成网络通信。
-- 每个 Socket 由 IP 地址 + 端口号 + 协议类型‌ 唯一标识，形成一个通信端点。
+- 每个 Socket 由 IP 地址 + 端口号 + 协议类型 唯一标识，形成一个通信端点。
 - 无论是基于 TCP 还是 UDP 的应用，都需要通过 Socket 接口与内核中的协议栈交互。  
 
 举个比喻：如果把 TCP/IP 协议栈比作邮政系统，那么 IP 是地址系统，TCP/UDP 是信件的投递方式（挂号信 vs 普通信），而 Socket 就是你去邮局寄信时填写单据、递交包裹的那个“窗口接口”。
 
-#### KCP 
+#### [KCP](Assets/Scripts/ThirdParty/Kcp/Kcp.cs) 
 ||
 |-|
 |[KCP协议：从TCP到UDP家族QUIC/KCP/ENET](https://cloud.tencent.com/developer/article/1964393)|
@@ -115,93 +152,121 @@ KCP是一个快速可靠协议，能以比 TCP浪费10%-20%的带宽的代价，
 纯算法实现，并不负责底层协议（如UDP）的收发，需要使用者自己定义下层数据包的发送方式，以 callback的方式提供给 KCP。 连时钟都需要外部传递进来，内部不会有任何一次系统调用。
 
 **KCP的实现细节：**  
-- ‌基于UDP‌：KCP底层使用了UDP协议来传输数据包，因为UDP提供了低延迟的特性，这对于游戏等实时应用非常重要。
-- ‌封装UDP‌：KCP在UDP的基础上增加了一层封装，这层封装包括了数据包的序列号、时间戳等控制信息，用于实现其特有的流量控制和拥塞控制机制。
-- ‌不纯粹的TCP特性‌：虽然KCP使用了UDP的传输机制，但它通过内部的机制（如滑动窗口、拥塞控制算法等）模拟了TCP的一些特性（如可靠性、流量控制），从而在保证低延迟的同时提高了数据传输的稳定性。
-#### KService & TService
-在 ET 框架中，KService、Session、TChannel 和 UDP Socket 之间的关系是构建其网络通信机制的重要组成部分。以下是它们之间的关系和作用：
+- 基于UDP：KCP底层使用了UDP协议来传输数据包，因为UDP提供了低延迟的特性，这对于游戏等实时应用非常重要。
+- 封装UDP：KCP在UDP的基础上增加了一层封装，这层封装包括了数据包的序列号、时间戳等控制信息，用于实现其特有的流量控制和拥塞控制机制。
+- 不纯粹的TCP特性：虽然KCP使用了UDP的传输机制，但它通过内部的机制（如滑动窗口、拥塞控制算法等）模拟了TCP的一些特性（如可靠性、流量控制），从而在保证低延迟的同时提高了数据传输的稳定性。
 
-1. KService 与 UDP Socket
-  - KService 是 ET 中用于处理 UDP 协议‌ 的服务类，它封装了 UDP 的监听和连接逻辑。
-  - 它内部使用 UdpClient 来创建 UDP 套接字（Socket），用于接收和发送数据包。
-  - 在服务端，KService 会监听特定的 IP 地址和端口，等待来自客户端的 UDP 数据包。
-  - KService 负责管理多个 UDP 连接，每个连接对应一个 Channel‌（如 KChannel）。    
-KService 与 UDP Socket 的关系是：KService 是对 UDP Socket 的封装，用于处理 UDP 的连接和通信。
 
-2. TChannel 与 TCP Socket
-  - TChannel 是 ET 中用于处理 TCP 连接的底层通道类。
-  - 它内部使用 Socket 类来创建 TCP 套接字，用于建立与客户端的连接。
-  - 每个 TChannel 对应一个 TCP 连接，负责该连接的数据收发。
-  - TChannel 会通过异步方式读取和发送数据，并将数据交给上层处理。  
-TChannel 与 TCP Socket 的关系是：TChannel 是对 TCP Socket 的封装，用于处理 TCP 连接的读写操作。
+#### [KService](Assets/Scripts/Core/Network/KService.cs) & [TService](Assets/Scripts/Core/Network/TService.cs)
 
-3. Session 与 Channel
-  - Session 是 ET 中对一个连接的高层封装，它基于 Channel（如 TChannel 或 KChannel）实现。
+|    KService (UDP)     |    |    TService (TCP)     |
+|:---------------------:|----|:---------------------:|
+|           ↓           |    |           ↓           |
+| KChannel (UDP Socket) |    | TChannel (TCP Socket) |
+|           ↓           |    |           ↓           |
+|  Session (业务逻辑层)      |    |    Session (业务逻辑层)    |
+- AService: KService 和 TService 是服务端的监听组件，分别处理 UDP 和 TCP 连接。
+- AChannel: KChannel 和 TChannel 是底层的连接通道，分别对应 UDP 和 TCP 的 Socket。
+- Session: 是上层的会话封装，负责业务逻辑处理，与 AChannel 一一对应。
+
+1. Session 与 AChannel: Session 是对 AChannel 的封装，提供业务层的接口和功能。
+  - Session 是 ET 中对一个连接的高层封装，它基于 AChannel（如 TChannel 或 KChannel）实现。
   - Session 提供了更高层的接口，用于发送和接收消息，并负责消息的序列化和反序列化。
-  - Session 与 Channel 之间是一对一的关系，一个 Session 对应一个 Channel。
+  - Session 与 AChannel 之间是一对一的关系，一个 Session 对应一个 AChannel。
   - Session 是上层业务逻辑与底层网络通信之间的桥梁。  
-   Session 是对 Channel 的封装，提供业务层的接口和功能。
+   
 
-4. KService 与 Session 的关系‌
-  - KService 通常会管理多个 KChannel（UDP 连接），而每个 KChannel 会对应一个 Session。
-  - 当一个 UDP 连接建立后，KService 会创建一个 KChannel，并将其与一个 Session 关联起来。
-  - Session 负责处理该连接上的消息逻辑。  
-KService 通过 KChannel 管理 UDP 连接，而每个 KChannel 对应一个 Session。
-
-5. TChannel 与 Session 的关系‌
-  - 类似地，TChannel 与 Session 也是一对一的关系。
-  - 当一个 TCP 连接建立后，TService 会创建一个 TChannel，并将其与一个 Session 关联。
-  - Session 负责处理该连接上的业务逻辑。  
-TChannel 与 Session 之间是一对一的绑定关系，TChannel 是底层通信通道，Session 是高层封装。
-
-
-
-| __总结关系图__   |    |   __总结关系图__  |
-|:---------------------:|----|:----------------------:|
-|    KService (UDP)     |    |     TService (TCP)     |
-|           ↓           |    |           ↓            |
-| KChannel (UDP Socket) |    | TChannel (TCP Socket)  |
-|           ↓           |    |           ↓            |
-|  Session (业务逻辑层)      |    |    Session (业务逻辑层)     |
-- KService 和 TService 是服务端的监听组件，分别处理 UDP 和 TCP 连接。
-- KChannel 和 TChannel 是底层的连接通道，分别对应 UDP 和 TCP 的 Socket。
-- Session 是上层的会话封装，负责业务逻辑处理，与 Channel 一一对应。
-
-这些组件共同构成了 ET 框架的网络通信机制，支持 TCP、UDP 和 WebSocket 等多种协议。
+2. AService 与 AChannel 的关系: AService 通过 KChannel 管理Socket链接
+  - AService 通常会管理多个 AChannel，而每个 AChannel 会对应一个 Session。
+  - 当一个 UDP/TCP 连接建立后，AService 会创建一个 AChannel，并将其与一个 Session 关联起来。
+  - Session 负责处理该连接上的消息逻辑。
 
 
 #### [ET Session](Assets/Scripts/Model/Share/Module/Message/Session.cs) <a id="session"></a>
 在 ET 框架中，Session 通过底层的 KChannel/TChannel 与客户端和服务端进行通信。客户端和服务端都维护一个与对方的 Socket 连接，这个连接通过 KChannel/TChannel 管理，Session 是对这个连接的封装。每个连接都有一个唯一的 Socket 套接字链接 ID，用于区分不同的连接。
 
-##### Session 的通信流程‌
-1. 连接建立‌：
-- 客户端通过 NetClientComponent.Create() 方法创建一个 Session，该方法会建立与服务器的 TCP 连接。
-- 服务器端通过 Accept() 方法监听客户端连接请求，当连接建立后，会创建一个 TChannel 对象，并将其包装成一个 Session 对象。
+##### Session 的通信流程
+1. 连接建立：
+- 客户端通过 [NetComponent.Create](/Users/uki/Desktop/projects/unity3d/third_party/ET/Unity/Assets/Scripts/Hotfix/Share/Module/Message/NetComponentSystem.cs)() 方法创建一个 Session，该方法会建立与服务器的 TCP 连接。
+- 服务器端通过 Accept() 方法监听客户端连接请求，当连接建立后，会创建一个 KChannel/TChannel 对象，并将其包装成一个 Session 对象。
 
-2. 底层通信‌：
+2. 底层通信：
 - Session 通过底层的 KChannel/TChannel 进行实际的数据传输。KChannel/TChannel 是一个封装了 Socket 连接的类，负责实际的网络读写操作。
 - 客户端和服务端都会维护一个与对方的 Socket 连接，这个连接通过 KChannel/TChannel 管理。Session 本身是上层逻辑对这个连接的封装。
 
-3. 消息传递‌：
+3. 消息传递：
 - 客户端通过 Session.Send() 方法发送消息给服务器，消息会通过底层的 KChannel/TChannel 发送到服务器。
 - 服务器端通过 Session 接收客户端发送的消息，并处理这些消息。
 
 ##### Socket 套接字链接 ID
-- 客户端和服务端都保持 Socket 套接字链接‌：
+- 客户端和服务端都保持 Socket 套接字链接：
   - 客户端和服务端都维护一个与对方的 Socket 连接，这个连接在底层通过 KChannel/TChannel 管理。
   - 每个连接都有一个唯一的标识符，即 Socket 套接字链接 ID。这个 ID 是操作系统分配给每个 UDP/TCP 连接的，用于区分不同的连接。
-- Session 与 Socket 的关系‌：
+- Session 与 Socket 的关系：
   - Session 是对底层 Socket 连接的封装，它包含了一个 KChannel/TChannel 对象，该对象持有实际的 Socket 连接。
   - 因此，Session 与 Socket 套接字链接 ID 是一一对应的，Session 通过 TChannel 操作底层的 Socket。
 
-#####  具体实现 TODO
-- Call
+##### 服务端怎么知道客户端的链接端口的
+具体来说，服务端的 [NetComponent](#netcomponent) 会监听指定的端口，当接收到客户端的连接请求时，会创建一个新的 Session 来表示这个连接。Session 对象内部会存储客户端的网络地址信息，服务端可以通过 Session 对象获取到客户端的 IP 地址和端口号。
+
+在 ET 框架的网络通信流程中，客户端通过 UDP 或 TCP 连接到服务端的特定端口，服务端监听这个端口并建立连接。一旦连接建立，服务端就可以通过 Session 获取客户端的网络地址信息，包括端口。
+
+
+####  具体实现（KService为例)
+##### [Session](Assets/Scripts/Model/Share/Module/Message/Session.cs)
 - Send
+  - 序列化消息
+  - 调用[KSevice.Send](Assets/Scripts/Core/Network/KService.cs)
+    - 根据Session对应的channelId，获得kchannel对象
+    - 调用[kchannel.Send](#kchannel_send)发送数据
+- Call
+  - 创建发送记录 RpcInfo
+  - 调用Send发送消息
+  - 等待发送结果 RpcInfo返回
+- OnResponse: (NetComponentOnReadInvoker_NetClient中调用)
+  - 调用 RpcInfo.SetResult，使得Call结束等待。
 
-### 开源物理引擎
-为了保证帧同步服务端与客户端计算结果一直，一般使用int物理引擎，开源的如 BEPUphysicsInt  
-[BEPU物理引擎碰撞系统的架构与设计](https://zhuanlan.zhihu.com/p/549276185)
+##### [Kchannel](Assets/Scripts/Core/Network/KChannel.cs)
+- Send <a id="kchannel_send"/></a>
+  - 检查数据大小合法性
+  - 使用KCP协议发送数据
+    - 小于MaxKcpPacketSize直接发送: ikcp_send
+    - 超出MaxKcpPacketSize需要分片发送: 先发送信息头，然后多次调用ikcp_send
+    - 调用 kSevice.AddToUpdate：登记下帧立即更新，即调用kchannel.Update
+  - 回收发送缓存
+- Update：主要作用是连接和驱动Kcp Update.
+  - 如果还没连接上，发送连接请求
+  - 调用kcp.Update
+  - 获取kcp下次更新时间
+  - 调用 kSevice.AddToUpdate 登记下次更新时间
+- HandleRecv: 
+  - 调用kcp.Input
+  - 读取消息（根据消息头，判断是否分片，多次或一次读取消息）
+  - 调用消息回调，如 NetComponent.OnRead、ProcessOuterSender.OnRead
+- HandleConnnect
+  - 创建KCP
+  - 发送所有待发消息
+- Connnect: 发送请求连接消息
+- OnError: 从KService中删掉自己，并调用断开回调
 
+##### [KService](Assets/Scripts/Core/Network/KService.cs)
+- Update
+  - 计算到期需要Update的KChannel
+  - 检查所有链接超时的KChannel
+  - 接收数据：Recv
+  - 更新所有需要Update的KChannel
+  - 调用UdpTransport.Update: 空方法.
+- Recv
+  - 调用 UdpTransport.Recv
+    - 调用socket.ReceiveFrom
+  - 如果是非正常消息，跳过
+  - 根据消息类型分别做相应处理: 中间有一系列安全检查和处理，具体看代码，下面列出主要流程
+    - RouterACK | RouterReconnectACK:(重连确认) 调用对应回调函数
+    - RouterReconnectSYN:(重连请求) 发送接受重连消息
+    - SYN:(链接请求) 创建KChannel管理链接，验证通过后发送接受链接消息。
+    - ACK:(connect确认)  调用kchannel.HandleConnnect
+    - FIN:(断开)  调用kChannel.OnError断开
+    - MSG:(消息)  调用kChannel.HandleRecv
 
 ## ET启动流程
 ![启动流程图片](readme_imgs/00_Start.jpg)  
@@ -309,10 +374,6 @@ TChannel 与 Session 之间是一对一的绑定关系，TChannel 是底层通�
       - 创建KChannel
       - 添加创建KChannel到 localConnChannels
 
-
-- 网络流程示意图
-![网络流程示意图](readme_imgs/02_Networks00.jpg)
-网络组件中的Call和Send的区别是，Call会异步等待结果返回，Send发给消息队列后就返回调用方。
 
 ### 服务端登录处理流程
 #### Realm Fiber
@@ -713,7 +774,6 @@ TChannel 与 Session 之间是一对一的绑定关系，TChannel 是底层通�
 ### ET缺点 
 感觉读项目代码比较难受，绕来绕去，估计是为了Demo其核心机制? 剩余其他的都算是小缺陷，以下列举一些。
 - 用c#的await+Task+SynchronizationContext很容易实现Fiber和异步编程，目前还没想明白为啥ET中重新实现了一遍。多用c#中的Event、Action、Func等机制，应该能更简洁的实现ET中的功能。
-- 感觉事件的实现，改用显示的注册(+=)和取消（-=），更容易追踪代码，且也能自动实现。
 - ET中的很多流程和事件处理，调用和转发了太多层
   - 消息的收发，经过多层才最终发送消息，收发消息都是在update中执行的，会延迟3ms；或许可以改成：消息直接发到消息队列，收发线程轮询处理消息收发，收到消息放消息队列or触发事件回调。
   - UI创建层层转发，感觉可以用UIFactor直接创建。
