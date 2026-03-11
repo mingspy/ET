@@ -3,13 +3,52 @@
 ## ET术语&机制
 
 ### 代码生成
-ET中有很多自动生成的代码，如[[EntitySystem]](../Share/Share.SourceGenerator/Generator/ETSystemGenerator/ETSystemGenerator.cs)主要依赖于 C# 的 Source Generator（源代码生成器）技术，结合特定的特性（Attribute）标记，在编译阶段自动推断并生成对应的 System 类文件，从而避免手动编写重复模板代码。  
+#### Proto2CS
+
+ET框架中的[Proto2CS](../Share/Tool/Proto2CS/Proto2CS.cs)工具是ET框架‌自己实现‌的，而不是调用开源的proto2cs工具。
+
+从ET框架的架构设计和实现方式来看，Proto2CS是框架内部的一个专用代码生成工具，用于将.proto协议文件转换为C#代码。这个工具是ET框架开发团队根据自身需求和框架特点专门开发的，以确保与ET框架的其他组件（如MemoryPack序列化机制、网络通信模块等）能够无缝集成。
+
+该工具的实现方式通常包括：
+
+解析.proto文件语法
+生成对应的C#类定义
+生成Opcode映射表
+与ET框架的序列化系统集成
+
+这种自研方式使得工具能够更好地适配ET框架的具体需求，包括其特定的协议处理逻辑和性能优化要求。
+
+| 源文件                                                                          | 生成文件|
+|------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| [ClientMessage_C_1000.proto](Assets/Config/Proto/ClientMessage_C_1000.proto) |[ClientMessage_C_1000.cs](Assets/Scripts/Model/Generate/ClientServer/Message/ClientMessage_C_1000.cs)|
+| [OuterMessage_C_10001.proto](Assets/Config/Proto/OuterMessage_C_10001.proto) |[OuterMessage_C_10001.cs](Assets/Scripts/Model/Generate/ClientServer/Message/OuterMessage_C_10001.cs)|
+
+
+
+#### ISourceGenerator
+ET中有很多自动生成的代码，主要依赖于 C# 的 Source Generator（源代码生成器）技术，结合特定的特性（Attribute）标记，在编译阶段自动推断并生成对应的接口类文件，从而避免手动编写重复模板代码。  
 搜索 ISourceGenerator 可以找到相关代码在 ET/Share/Share.SourceGenerator/Generator/ 文件夹下  
+
+| Source Generator 名称                                                                                                    | 功能描述                                                                                                                             | 生成的类示例                                                |
+|------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------|
+| [ETSystemGenerator](../Share/Share.SourceGenerator/Generator/ETSystemGenerator/ETSystemGenerator.cs)                   | 用于自动生成Entity相关的System类，开发者只需定义带有[EntitySystem]特性的静态方法，即可在编译时生成完整的System类文件 用于生成组件相关的System类，支持组件生命周期管理方法（如Awake、Update等）的自动化生成 | ET_Client_LSAnimatorComponent_AwakeSystem |
+| [ETGetComponentGenerator](../Share/Share.SourceGenerator/Generator/ETGetComponentGenerator.cs) | 生成[ComponentOf]属性标签的代码                                                                                                           |  |
+| [ETEntitySerializeFormatterGenerator](../Share/Share.SourceGenerator/Generator/ETEntitySerializeFormatterGenerator.cs) | 生成[MemoryPackable]属性相关代码，如Formatter类                                                                                             | C2R_LoginFormatter、C2G_EnterMapFormatter、等            |
 参考:  [Roslyn 技术解析：如何利用它做代码生成？](https://blog.csdn.net/2501_94611820/article/details/155851773) 、   [聊一聊 C#中有趣的 SourceGenerator生成器](https://zhuanlan.zhihu.com/p/778871873)
 
 ### SceneType变更
+ET中有很多消息处理器限制使用场景，但是创建的的Fiber只有Main,NetClient,NetInner等几个类型，没有Demo/LockStep等。
+```csharp
+    if (!scene.SceneType.HasSameFlag(eventInfo.SceneType)) {
+        continue;
+    }
+```
 在[EntryEvent3_InitClient](Assets/Scripts/HotfixView/Client/Demo/EntryEvent3_InitClient.cs) 中会修改Client中SceneType.Main 为 globalComponent.GlobalConfig.AppType，如 Demo、LockStep，从而使得部分Hanlder适配。
-
+```csharp
+    // 根据配置修改掉Main Fiber的SceneType
+    SceneType sceneType = EnumHelper.FromString<SceneType>(globalComponent.GlobalConfig.AppType.ToString());
+    root.SceneType = sceneType;
+```
 ### ECS
 Entity & Componet & System（实体、组件、系统），类似于MVC  
 实体是数据  
@@ -327,7 +366,8 @@ KCP是一个快速可靠协议，能以比 TCP浪费10%-20%的带宽的代价，
   - 发布[**LoginFinsh**]事件
 
 #### 登录网络处理细节
-- [ProcessInnerSender.Call<a id="pisender-call"></a>](Assets/Scripts/Core/Fiber/Module/Actor/ProcessInnerSenderSystem.cs)：发送登录请求消息[Main2NetClient_Login]给网络纤程，并异步等待返回结果
+##### [ProcessInnerSender.Call<a id="pisender-call"></a>](Assets/Scripts/Core/Fiber/Module/Actor/ProcessInnerSenderSystem.cs)
+发送登录请求消息[Main2NetClient_Login]给网络纤程，并异步等待返回结果
   - 把请求消息放到 [MessageQueue](Assets/Scripts/Core/World/Module/Actor/MessageQueue.cs)中
   - 添加消息发送结构体 MessageSenderStruct
   - 设置超时，并开始异步等待服务器返回结果。
@@ -335,12 +375,13 @@ KCP是一个快速可靠协议，能以比 TCP浪费10%-20%的带宽的代价，
     - 从 MessageQueue 取出消息，按类型处理：
       - 如果是Response，则SetResult，使ETTask结束await
       - 如果是Request，则调用[MailBoxComponent.Add](Assets/Scripts/Core/Fiber/MailBoxComponent.cs)，内部实现是发布一个[MailBoxInvoker]事件。
-- [Fiber_NetClient](Assets/Scripts/Hotfix/Client/Demo/NetClient/FiberInit_NetClient.cs): 网络数据收发
+##### [Fiber_NetClient](Assets/Scripts/Hotfix/Client/Demo/NetClient/FiberInit_NetClient.cs)
+网络数据收发
     - [MailBoxType_UnOrderedMessageHandler](Assets/Scripts/Hotfix/Share/Module/Actor/MailBoxType_UnOrderedMessageHandler.cs)会处理[MailBoxInvoker]事件，内部调用 MessageDispatcher.handle
       - [MessageDispatcher.handle](Assets/Scripts/Core/World/Module/Actor/MessageDispatcher.cs)找到消息对应的handler ： Main2NetClient_LoginHandler
         - [Main2NetClient_LoginHandler](Assets/Scripts/Hotfix/Client/Demo/NetClient/Main2NetClient_LoginHandler.cs) 执行实际的登录请求，具体过程：
           - 获取Gate地址
-            - 创建[NetComponent]:负责数据的收发
+            - 创建[NetComponent](#netcomponent):负责数据的收发
             - 获取Realme地址
             - 使用Realm地址[创建session](#crsession) ，
             - 并使用[session.Call](#session)发送[C2R_Login](#c2r_loginhandler) 请求
@@ -352,23 +393,24 @@ KCP是一个快速可靠协议，能以比 TCP浪费10%-20%的带宽的代价，
             - 创建[C2G_LoginGate](#c2g_logingatehandler)请求
             - 发送给Gate，并等待返回结果
             - 获取响应G2C_LoginGate中的PlayerId
-- [NetComponent<a id="netcomponent"></a>](Assets/Scripts/Hotfix/Share/Module/Message/NetComponentSystem.cs)细节
+##### [NetComponent<a id="netcomponent"></a>](Assets/Scripts/Hotfix/Share/Module/Message/NetComponentSystem.cs)
   - Awake：初始化
     - 创建[KService](Assets/Scripts/Core/Network/KService.cs)：kcp服务，用于接受链接和请求
     - 注册ReadCallback回调函数为[OnRead]，用于接受请求消息
   - OnRead：收到消息反序列化，并调用相关handler
-    - 反序列化收到的消息
-    - 调用EventSystem.Invoke发布 [NetComponentOnRead]事件
+    - 根据channelId，获取session 
+    - 反序列化收到的消息 msg
+    - 调用EventSystem.Invoke发布 [NetComponentOnRead]事件, 参数为 session, msg
       - EventSystem.Invoke会找到对应的消息处理器，并调用其处理消息，参考下面的[Realm Fiber](#realm-fiber)
   - [CreateRouterSession<a id="crsession"></a>](Assets/Scripts/Hotfix/Client/Demo/NetClient/Router/RouterHelper.cs): 创建session
     - 获取Router地址
     - 调用Create创建RouterSession
     - 向session添加 PingComponent、RouterCheckComponent
   - Create: 创建session
-    - AddChildWithId：创建session Entity
+    - AddChildWithId：创建session Entity，并登记session为自己的子组件
       - 创建一个Entity作为session元数据
       - 设置ID 
-      - 并设置其[Parent](Assets/Scripts/Core/Entity/Entity.cs)，用于周期性调度
+      - 并设置其[Parent](Assets/Scripts/Core/Entity/Entity.cs)为自己
     - 设置RemoteAddress
     - [AService.Create](Assets/Scripts/Core/Network/KService.cs)创建KChannel
       - 创建KChannel
