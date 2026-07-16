@@ -55,14 +55,16 @@ Entity 实体是数据
 Componet 组件，代表了一组功能，是逻辑的定义 
 System 系统是具体功能的实现
 
+一个比较好的ECS(或者叫MVC更贴切）的实现，参考 **[MoveComponent](#MoveComponent)**
+
 项目[Book/3.3](../Book/3.3一切皆实体.md)介绍的非常详细了。  
 
-| 一些组件                                 | 作用         |
-|:-------------------------------------|:-----------|
-| [ProcessInnerSender](#pisender-call) | 进程内部消息转送组件 |
-| [NetComponent](#netcomponent)        | 网络数据的收发组件  |
-| [Session](#session)                  | 会话组件       |
-| [MoveComponent](#MoveComponent)      | 角色移动组件     |
+| 一些组件                                 | 作用                                                                                   |
+|:-------------------------------------|:-------------------------------------------------------------------------------------|
+| [ProcessInnerSender](#pisender-call) | 进程内部消息转送组件                                                                           |
+| [NetComponent](#netcomponent)        | 网络数据的收发组件                                                                            |
+| [Session](#session)                  | 会话组件                                                                                 |
+| **[MoveComponent](#MoveComponent)**  | 角色移动组件，查看ECS用法可以看这个组件的实现，包括底层position(float3)数据的控制，以及发布通知，表现层改变角色位置Position(Vector3) |
 
 
 ### ETTask
@@ -591,7 +593,7 @@ KCP是一个快速可靠协议，能以比 TCP浪费10%-20%的带宽的代价，
 #### [MoveComponent](Assets/Scripts/Hotfix/Share/Module/Move/MoveComponentSystem.cs)
 - 实现原理
   - 采用[定时器](Assets/Scripts/Core/Fiber/Module/Timer/TimerComponent.cs)每帧(update中)移动一个路径点，结束时清除定时器。
-  - 移动路径点时设置[unit.Position](Assets/Scripts/Model/Share/Module/Unit/Unit.cs)，会发布 [ChangePosition] 事件
+  - 移动路径点时设置[unit.Position](Assets/Scripts/Model/Share/Module/Unit/Unit.cs)，Position函数内部自动发布 [ChangePosition] 事件
     - 客户端:-->> [ChangePosition_SyncGameObjectPos](Assets/Scripts/HotfixView/Client/Demo/Unit/ChangePosition_SyncGameObjectPos.cs)移动角色   GameObject.transform.position
     - 服务端:-->> [ChangePosition_NotifyAOI](Assets/Scripts/Hotfix/Server/Demo/Map/AOI/ChangePosition_NotifyAOI.cs)更新AOI范围
   - 移动时设置[unit.Rotation]，会发布[ChangeRotation]事件
