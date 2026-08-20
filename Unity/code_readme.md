@@ -1,4 +1,121 @@
 # ET代码阅读记录
+## 模块划分
+在 ET 框架（特别是基于 Unity 的客户端版本）中，这种模块划分是为了实现代码热更新、逻辑与表现分离以及服务端/客户端代码共享。以下是各个子模块的具体作用及设计逻辑：
+
+1. 核心基础层
+*   Core (cn.etetet.core)
+    *   作用：框架的最底层核心，包含 ECS 架构的基础实体（Entity）、组件（Component）、系统（System a.k.a SystemHelper/SystemBase）定义，以及核心的异步任务调度（ETTask）、对象池、事件机制等。
+    *   特点：不依赖 Unity 引擎 API，纯 C实现。这是整个框架运行的基石，无论是服务端还是客户端都必须引用。
+*   ThirdParty
+    *   作用：存放第三方库和插件。
+    *   内容：通常包括网络库（如 KCP/ENet）、序列化库（Protobuf/MongoDB Driver）、数学库或其他非 Unity 原生的 C库。
+    *   目的：将外部依赖隔离，方便统一管理和升级，避免污染业务代码。
+
+2. 数据与逻辑层（支持热更与服务端复用）
+这一层的代码严禁引用任何 Unity 引擎相关的 API（如 `UnityEngine`, `UnityEditor`），以便能在服务端（.NET Core/.NET 6+）和客户端之间共享，并支持 DLL 热更新。
+
+*   Model (cn.etetet.model)
+    *   作用：定义游戏世界的数据结构。
+    *   内容：包含 Entity 的子类定义、Component 的数据字段定义。例如：玩家属性、背包物品数据、地图配置数据等。
+    *   特点：只存数据，不包含复杂的游戏逻辑行为。它是“状态”的载体。
+*   Hotfix (cn.etetet.hotfix)
+    *   作用：实现游戏的核心逻辑行为。
+    *   内容：包含各种 System 类（继承自 AwakeSystem, UpdateSystem, DestroySystem 等），用于处理 Model 中数据的初始化、更新和销毁逻辑；以及网络消息的处理逻辑、战斗计算、AI 逻辑等。
+    *   特点：
+        *   可热更：这部分代码编译为 DLL，运行时可替换，用于修复 Bug 或更新玩法。
+        *   双端共享：由于不依赖 Unity，同样的 Hotfix 代码可以在服务端运行，实现“逻辑一致性”，减少前后端沟通成本。
+
+3. 表现层（仅客户端，依赖 Unity）
+这一层的代码可以且必须引用 Unity 引擎 API，负责将逻辑层的数据可视化。这部分代码通常不支持传统意义上的 DLL 热更（因为涉及资源绑定和 Unity 内部机制），或者通过 Addressables/YooAsset 等资源系统进行间接更新。
+
+*   ModelView (cn.etetet.modelview)
+    *   作用：定义与 Unity 表现相关的数据结构或组件包装。
+    *   内容：例如，一个 `Unit` 在 Model 层只是坐标和血量数据，而在 ModelView 层可能包含对 Unity `GameObject`、`Animator`、`ParticleSystem` 等组件的引用或包装器。
+    *   特点：桥接纯数据与 Unity 对象。
+*   HotfixView (cn.etetet.hotfixview)
+    *   作用：实现表现层逻辑，即“如何显示”。
+    *   内容：
+        *   UI 界面的打开/关闭、数据绑定。
+        *   模型的加载、动画播放、特效生成。
+        *   摄像机控制、输入反馈（点击特效等）。
+    *   交互原则：
+        *   表现层 -> 逻辑层：直接调用。例如 UI 按钮点击后，调用 `LoginSystem.Login()`。
+        *   逻辑层 -> 表现层：禁止直接调用。逻辑层通过发布事件（EventSystem.Publish）通知表现层。例如，登录成功后，逻辑层发布 `LoginSuccessEvent`，HotfixView 中的监听者收到事件后，执行关闭登录面板、打开主界面的操作。
+    *   目的：确保逻辑层完全解耦，使得同一套逻辑可以适配不同的表现层（如 PC 端、移动端、甚至无界面的压测机器人）。
+
+4. 资源管理层
+*   Loader (cn.etetet.loader / cn.etetet.yooassets)
+    *   作用：封装资源加载逻辑。
+    *   内容：通常基于 YooAsset 或 Unity 原有的 Addressables 进行二次封装。提供统一的异步加载接口（`LoadAssetAsync`），处理资源的引用计数、依赖加载、场景切换和资源卸载。
+    *   特点：屏蔽底层资源管理细节，让业务层（Hotfix/HotfixView）只需关心“我要什么资源”，而不必关心“资源在哪里、怎么加载、何时卸载”。
+
+总结架构图示
+以下是 ET 框架模块架构 Mermaid 流程图。该图清晰展示了各模块的依赖关系及数据流向，特别是逻辑层与表现层通过事件解耦的核心设计。
+
+```mermaid
+graph TD
+    %% 定义样式
+    classDef unity fill:e1f5fe,stroke:01579b,stroke-width:2px;
+    classDef logic fill:fff3e0,stroke:e65100,stroke-width:2px;
+    classDef infra fill:f3e5f5,stroke:4a148c,stroke-width:2px;
+
+    subgraph Client_Only_Unity_Dependent ["表现层 (仅客户端 | 依赖 Unity)"]
+        direction TB
+        HV[HotfixView<br/>UI / 动画 / 特效 / 输入处理]:::unity
+        MV[ModelView<br/>Unity 对象包装 / 组件引用]:::unity
+    end
+
+    subgraph Cross_Platform_Hotfixable ["逻辑与数据层 (双端共享 | 可热更 | 无 Unity 依赖)"]
+        direction TB
+        H[Hotfix<br/>业务逻辑 / 网络消息 / AI / System]:::logic
+        M[Model<br/>Entity / Component 数据定义]:::logic
+    end
+
+    subgraph Infrastructure ["基础设施层"]
+        direction TB
+        L[Loader<br/>资源加载封装 YooAsset/Addressables]:::infra
+        C[Core<br/>ECS 核心 / ETTask / 事件机制]:::infra
+        T[ThirdParty<br/>第三方库 Protobuf/KCP等]:::infra
+    end
+
+    %% 依赖关系 (实线表示编译/代码依赖)
+    HV --> H
+    HV --> MV
+    HV --> L
+    MV --> M
+    H --> M
+    H --> L
+    H --> C
+    M --> C
+    L --> C
+    T --> C
+
+    %% 通信关系 (虚线表示运行时事件通信)
+    H -.->|发布事件 Event| HV
+
+    %% 布局提示
+    linkStyle default interpolate basis
+```
+
+图表说明：
+1.  分层结构：
+    *   表现层 (蓝色)：`HotfixView` 和 `ModelView` 直接依赖 Unity 引擎，负责视觉呈现和用户交互。
+    *   逻辑层 (橙色)：`Hotfix` 和 `Model` 纯 C实现，不依赖 Unity，支持热更新和服务端复用。
+    *   基础设施层 (紫色)：`Core`、`Loader` 和 `ThirdParty` 为上层提供底层支持。
+
+2.  依赖方向：
+    *   上层模块依赖下层模块（如 `HotfixView` 依赖 `Hotfix`）。
+    *   逻辑层 (`Hotfix`) 严禁依赖表现层 (`HotfixView`)，确保逻辑纯净。
+
+3.  通信机制：
+    *   单向调用：表现层可以直接调用逻辑层接口（如点击按钮触发登录逻辑）。
+    *   事件解耦：逻辑层通过发布事件（虚线）通知表现层更新 UI（如登录成功后弹出主界面），避免循环依赖。
+
+
+关键设计哲学：
+1.  解耦：逻辑（Hotfix）不知道表现（HotfixView）的存在，只通过数据（Model）和事件交互。
+2.  热更：只有不依赖 Unity 的代码（Model/Hotfix）才能方便地进行 DLL 热更新。
+3.  复用：服务端可以直接复用 Model 和 Hotfix 代码，保证逻辑绝对一致。
 
 ## ET术语&机制
 
