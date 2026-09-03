@@ -167,10 +167,52 @@ ET中有很多消息处理器限制使用场景，但是创建的的Fiber只有M
     root.SceneType = sceneType;
 ```
 ### ECS
-Entity & Componet & System（实体、组件、系统），类似于MVC  
-Entity 实体是数据  
-Componet 组件，代表了一组功能，是逻辑的定义 
-System 系统是具体功能的实现
+Entity & Componet & System（实体、组件、系统）  
+在 Unity 的 ECS（Entity Component System，实体-组件-系统）架构中，核心设计理念是从“面向对象（OOP）”转向“面向数据（DOD）”。这种转变旨在通过优化内存布局和 CPU 缓存命中率来极大提升性能，特别是在处理海量对象时。
+
+以下是 Entity、Component 和 System 的具体含义及它们之间的关系：
+
+1. Entity（实体）：数据的索引/句柄
+*   定义：Entity 本身不包含任何数据或逻辑。它仅仅是一个轻量级的标识符（Handle），类似于数据库中的主键或身份证 ID。
+*   结构：在代码层面，它通常由 `Index`（索引）和 `Version`（版本）组成。
+    *   `Index`：用于区分不同的实体。
+    *   `Version`：用于管理实体的生命周期。由于实体可以被销毁并重新分配给新对象，Version 确保你不会访问到一个已被销毁的旧实体的数据。
+*   作用：Entity 的作用是“引路”，它将一组相关的 Component 捆绑在一起，让 System 知道哪些数据属于同一个游戏对象。
+
+2. Component（组件）：纯数据
+*   定义：Component 是存储实际数据的地方。在 Unity ECS 中，Component 必须是结构体（struct），且通常不能包含引用类型（如 class、string 等，除非使用特殊的 Shared Component）。
+*   特点：
+    *   无行为：Component 只包含数据（如位置、速度、生命值），不包含任何方法或逻辑函数。
+    *   内存布局优化：相同类型的 Component 在内存中是连续存储的（数组形式）。这种“空间局部性”使得 CPU 缓存能高效加载数据，从而大幅提升遍历和处理速度。
+    *   常见类型：
+        *   `IComponentData`：最常用的组件接口，每个实体拥有独立的数据副本。
+        *   `ISharedComponentData`：用于多个实体共享同一份数据（如相同的渲染网格或材质），以减少内存占用。
+*   示例：一个“玩家”实体可能拥有 `Position`（位置）、`Velocity`（速度）和 `Health`（生命值）三个 Component。
+
+3. System（系统）：处理逻辑
+*   定义：System 是执行游戏逻辑的地方。它负责读取 Component 中的数据，进行计算，然后将结果写回 Component。
+*   工作方式：
+    *   System 不关心具体的“对象”，它只关心“数据”。
+    *   每一帧（或在特定更新周期），System 会查询所有拥有特定 Component 组合的 Entity。
+    *   例如，一个 `MovementSystem` 会查找所有同时拥有 `Position` 和 `Velocity` 组件的实体，然后根据速度更新位置。
+*   优势：
+    *   逻辑与数据分离：System 是无状态的，易于测试和维护。
+    *   并行处理：由于数据是连续存储且逻辑清晰，System 很容易利用多核 CPU 进行并行计算（通过 Job System 和 Burst Compiler）。
+
+总结对比：传统 OOP vs Unity ECS
+
+| 特性 | 传统 GameObject (OOP) | Unity ECS (DOD) |
+| :--- | :--- | :--- |
+| 核心单元 | GameObject (对象) | Entity (实体 ID) |
+| 数据存放 | MonoBehaviour 类 (引用类型，分散在堆内存) | Component 结构体 (值类型，连续内存块) |
+| 逻辑存放 | 写在 MonoBehaviour 的方法中 | 写在 System 中，独立于数据 |
+| 内存效率 | 低 (缓存未命中率高，数据分散) | 高 (缓存友好，SIMD 优化) |
+| 适用场景 | 少量对象，复杂交互逻辑 | 海量对象 (如成千上万的单位、粒子、弹幕) |
+
+简单比喻：
+*   Entity 就像图书馆里的索书号，它本身不是书，只是指向书的标签。
+*   Component 就像书页上的具体内容（文字、图片），这些数据按类别整齐地摆放在书架上。
+*   System 就像图书管理员或读者，他们根据索书号找到对应的书，阅读内容（读取数据），并可能做笔记或修改内容（写入数据）。
 
 一个比较好的ECS(或者叫MVC更贴切）的实现，参考 **[MoveComponent](#MoveComponent)**
 
