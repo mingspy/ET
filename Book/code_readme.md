@@ -116,7 +116,8 @@ graph TD
 1.  解耦：逻辑（Hotfix）不知道表现（HotfixView）的存在，只通过数据（Model）和事件交互。
 2.  热更：只有不依赖 Unity 的代码（Model/Hotfix）才能方便地进行 DLL 热更新。
 3.  复用：服务端可以直接复用 Model 和 Hotfix 代码，保证逻辑绝对一致。
-
+## 视频教程
+[ET框架 -- 组件定义与生命周期](https://www.bilibili.com/video/BV1Sn4y1Q7Ne?t=1939.5)  by [和v诺](https://space.bilibili.com/394245976/lists/2952969?type=season)
 ## ET术语&机制
 
 ### 代码生成
