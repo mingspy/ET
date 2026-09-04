@@ -118,10 +118,10 @@ graph TD
 3.  复用：服务端可以直接复用 Model 和 Hotfix 代码，保证逻辑绝对一致。
 ## 视频教程
 [ET框架 -- 组件定义与生命周期](https://www.bilibili.com/video/BV1Sn4y1Q7Ne?t=1939.5)  by [和v诺](https://space.bilibili.com/394245976/lists/2952969?type=season)
-## ET术语&机制
 
-### 代码生成
-#### Proto2CS
+
+## ET中的代码生成
+### Proto2CS
 
 ET框架中的[Proto2CS](../Share/Tool/Proto2CS/Proto2CS.cs)工具是ET框架‌自己实现‌的，而不是调用开源的proto2cs工具。
 
@@ -141,7 +141,114 @@ ET框架中的[Proto2CS](../Share/Tool/Proto2CS/Proto2CS.cs)工具是ET框架‌
 | [ClientMessage_C_1000.proto](../Unity/Assets/Config/Proto/ClientMessage_C_1000.proto) |[ClientMessage_C_1000.cs](../Unity/Assets/Scripts/Model/Generate/ClientServer/Message/ClientMessage_C_1000.cs)|
 | [OuterMessage_C_10001.proto](../Unity/Assets/Config/Proto/OuterMessage_C_10001.proto) |[OuterMessage_C_10001.cs](../Unity/Assets/Scripts/Model/Generate/ClientServer/Message/OuterMessage_C_10001.cs)|
 
+### EntitySystem等自动生成
+#### 示例及过程
+```csharp
+[ComponentOf(typeof (Unit))]
+    public class BuffComponent: Entity, IAwake, IUpdate
+    {
+       
+    }
 
+    [EntitySystemOf(typeof(BuffComponent))]
+    [FriendOf(typeof(BuffComponent))]
+    public static partial class BuffComponentSystem
+    {
+        [EntitySystem]
+        private static void Awake(this ET.BuffComponent self)
+        {
+
+        }
+        [EntitySystem]
+        private static void Update(this ET.BuffComponent self)
+        {
+
+        }
+    }
+
+  // 自动生成代码如下：
+    public static partial class BuffComponentSystem
+    {
+        [EntitySystem]
+        public class ET_BuffComponent_AwakeSystem: AwakeSystem<ET.BuffComponent>
+        {   
+            protected override void Awake(ET.BuffComponent self)
+            {
+                self.Awake();
+            }
+        }
+    }
+
+    public static partial class BuffComponentSystem
+    {
+        [EntitySystem]
+        public class ET_BuffComponent_UpdateSystem: UpdateSystem<ET.BuffComponent>
+        {   
+            protected override void Update(ET.BuffComponent self)
+            {
+                self.Update();
+            }
+        }
+    }
+```
+
+
+ET 框架实现上述代码自动生成及注册调用的核心机制主要依赖于 CSource Generator（源代码生成器） 技术，结合 ET 特有的 EntitySystemOf 特性与 EventSystem 事件驱动架构。
+
+以下是具体的实现原理与流程解析：
+
+1. 代码自动生成原理：Source Generator
+
+在 ET 8.0 及更高版本中，框架引入了 `cn.etetet.sourcegenerator`包，利用 Roslyn 编译器提供的 Source Generator API 在编译期进行代码分析生成。
+
+*   触发机制：
+    开发者在静态部分类（`static partial class`）上标记 `[EntitySystemOf(typeof(BuffComponent))]` 特性。Source Generator 会在编译阶段扫描所有带有此特性的类。
+*   解析过程：
+    生成器会查找该静态类中带有 `[EntitySystem]` 标记且方法签名为 `private static void MethodName(this ComponentType self)` 的方法。例如 `Awake` 和 `Update`。
+*   代码注入：
+    根据解析到的方法名（如 Awake, Update），生成器会自动创建继承自对应系统基类（如 `AwakeSystem<T>`, `UpdateSystem<T>`）的内部类。
+    *   生成的类名通常遵循 `ET_{ComponentName}_{MethodName}System` 的命名规范。
+    *   生成的类会重写基类的虚方法（如 `protected override void Awake(T self)`），并在其中调用开发者编写的静态扩展方法（如 `self.Awake()`）。
+
+这就解释了为什么你只需要写简单的静态扩展方法，而最终编译后的 DLL 中会出现完整的 `AwakeSystem` 和 `UpdateSystem` 子类。
+
+2. 系统注册机制：EventSystem
+
+生成的 System 类并不是通过硬编码注册到某个列表中的，而是利用 ET 的 EventSystem（事件系统） 进行自动发现和注册。
+
+*   特性标记：
+    注意生成的代码中保留了 `[EntitySystem]` 特性（或者在旧版本/特定配置下可能依赖类名规范或继承关系，但在 ET 8+ 中通常结合特性或反射扫描）。
+*   启动扫描：
+    在游戏启动初始化阶段（通常在 `Game.Init` 或 `StartConfig` 加载时），`EventSystem` 会通过反射扫描程序集中所有的类型。
+*   类型识别与注册：
+    `EventSystem` 会识别出所有继承自 `ASystem`（如 `AwakeSystem`, `UpdateSystem` 等）的类。
+    *   它会将这些 System 实例化。
+    *   根据 System 所关注的组件类型（泛型参数 `T`，即 `BuffComponent`）和方法类型（Awake, Update 等），将其注册到内部的字典或映射表中。
+    *   例如，`AwakeSystem<BuffComponent>` 会被注册到负责处理 `BuffComponent` 唤醒逻辑的容器中。
+
+3. 调用执行流程
+
+当游戏运行时，ET 框架通过 ECS 架构驱动这些系统的执行：
+
+1.  实体创建与 Awake 调用：
+    *   当代码执行 `Entity.AddComponent<BuffComponent>()` 时，ET 内部会创建 `BuffComponent` 实例。
+    *   随后，`EventSystem` 会查询是否有注册过的 `AwakeSystem<BuffComponent>`。
+    *   如果找到，则调用该 System 的 `Awake(component)` 方法。
+    *   由于生成的代码中重写了 `Awake` 并调用了 `self.Awake()`，因此最终执行了你编写的静态扩展方法逻辑。
+
+2.  每帧更新与 Update 调用：
+    *   在主循环（Game Loop）中，ET 会遍历所有需要更新的实体或组件。
+    *   对于拥有 `BuffComponent` 的实体，`EventSystem` 会查找注册的 `UpdateSystem<BuffComponent>`。
+    *   调用其 `Update(component)` 方法，进而执行你定义的静态 `Update` 逻辑。
+
+总结
+
+*   怎么写：使用 `[EntitySystemOf]` 标记静态部分类，定义带 `[EntitySystem]` 的静态扩展方法。
+*   怎么生成：编译期由 Source Generator 扫描特性，生成继承自 `AwakeSystem/UpdateSystem` 的具体类，并将调用桥接到你的静态方法。
+*   怎么注册：运行时由 EventSystem 通过反射扫描所有 System 子类，按组件类型和方法类型自动注册到事件分发器中。
+*   怎么调用：框架底层在组件生命周期节点（创建、每帧等）通过 EventSystem 分发事件，触发对应的 System 执行。
+
+这种设计使得开发者无需手动编写繁琐的 System 类样板代码，同时也保持了 ECS 架构的高内聚低耦合特性，且避免了传统虚函数调用带来的部分性能开销（通过静态方法调用和代码生成优化）。<br>参考资料<br>[1] [告别重复劳动：ET框架如何用代码生成自动创建System类-CSDN博客 - CSDN博客](https://blog.csdn.net/gitblog_00896/article/details/152433465)<br>[2] [【ET 8.0-8.1版本】ET框架 - C#全栈式网络游戏开发框架（入门篇）_UWA学堂 - UWA学堂](https://edu.uwa4d.com/course-intro/1/542)<br>[3] [unityet框架学习 - 知乎](http://zhuanlan.zhihu.com/p/619325854?eqid=a42c34510005041d00000003648d28ee&utm_id=0)<br>[4] [基于自定义注解和代码生成实现路由框架-华为开发者话题 | 华为开发者联盟 - 华为开发者联盟](https://developer.huawei.com/consumer/cn/forum/topic/0207153170697988820)<br>[5] [高效实战：ET框架UI事件系统与委托交互完整指南-CSDN博客 - CSDN博客](https://blog.csdn.net/gitblog_00460/article/details/156042938)<br>[6] [ET框架UI事件系统实战指南：从委托机制到高效交互的深度解析-CSDN博客 - CSDN博客](https://blog.csdn.net/gitblog_00039/article/details/156042979)<br>[7] [ET8.1框架ECS组件式编程实战：从原理到游戏服务器应用-CSDN博客 - CSDN博客](https://blog.csdn.net/weixin_33834075/article/details/91566983)<br>[8] [游戏战斗框架设计（六）：魔法效果与 Buff——一个 Buff 如何改变角色 - 知乎 - 知乎](https://zhuanlan.zhihu.com/p/2051617667589595239)<br>[9] [TEngine--流程（2） - 知乎 - 知乎](https://zhuanlan.zhihu.com/p/1910833946431850281)<br>[10] [【UE5】反射机制 - 类型信息收集与注册（源码剖析） - 知乎 - 知乎](https://zhuanlan.zhihu.com/p/2026686842083221823)<br>[11] [【Unity】认识常用的生命周期函数（Awake、Start、Update...）_草庐IT - it.caolu.xin](https://it.caolu.xin/v/8uqlte/)<br>[12] [Unity中Awake、Start和Update这些函数到底什么时候执行？顺序和用途有什么区别？ - CSDN文库 - 博客](https://wenku.csdn.net/answer/azr9ccf79uad)<br>[13] [ET框架：Unity游戏服务端的工业级架构实践-CSDN博客 - CSDN博客](https://blog.csdn.net/weixin_30431445/article/details/161355813)<br>[14] [ET框架代码生成模板：自定义System类生成规则-CSDN博客 - CSDN博客](https://blog.csdn.net/gitblog_00819/article/details/152204888)<br>[15] [ECS系统入门手记——其三 - 知乎 - 知乎](https://zhuanlan.zhihu.com/p/1988986223159706625)<br>[16] [Unity ET框架学习 - 知乎 - 知乎](https://zhuanlan.zhihu.com/p/619325854)<br>[17] [C#中Start Update Awake的执行先后顺序 - CSDN文库 - 博客](https://wenku.csdn.net/answer/2t1w0rusr7)<br>[18] [【Unity脚本生命周期深度解析】：C#中Awake、Start、Update执行顺序全揭秘-CSDN博客 - CSDN博客](https://blog.csdn.net/FastCompile/article/details/157213761)<br>[19] [ET 7.2框架学习(2)-CSDN博客 - CSDN博客](https://blog.csdn.net/u013404885/article/details/131257104)<br>[20] [【ET源代码解析1】项目初始化流程 - 知乎 - 知乎](https://zhuanlan.zhihu.com/p/1910703524498641597)<br>[21] [【Unity 底层与原理向】07_Script_Execution_Order机制与坑点 - 知乎 - 知乎](https://zhuanlan.zhihu.com/p/1962629406137770323)<br>[22] [Unity中生命周期方法详解：Awake、Start、Update与 FixedUpdate - 百家号](https://baijiahao.baidu.com/s?id=1846813385591292278&wfr=spider&for=pc)<br>[23] [ET记录 - 简书 - 简书社区](https://www.jianshu.com/p/ad8e9df17d18)<br>
 
 #### ISourceGenerator
 ET中有很多自动生成的代码，主要依赖于 C# 的 Source Generator（源代码生成器）技术，结合特定的特性（Attribute）标记，在编译阶段自动推断并生成对应的接口类文件，从而避免手动编写重复模板代码。  
@@ -173,6 +280,7 @@ ET中有很多消息处理器限制使用场景，但是创建的的Fiber只有M
     SceneType sceneType = EnumHelper.FromString<SceneType>(globalComponent.GlobalConfig.AppType.ToString());
     root.SceneType = sceneType;
 ```
+## ET术语及部分机制
 ### ECS
 Entity & Componet & System（实体、组件、系统）  
 在 Unity 的 ECS（Entity Component System，实体-组件-系统）架构中，核心设计理念是从“面向对象（OOP）”转向“面向数据（DOD）”。这种转变旨在通过优化内存布局和 CPU 缓存命中率来极大提升性能，特别是在处理海量对象时。
